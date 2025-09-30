@@ -1,15 +1,22 @@
 {
   "name": "outlook-linkedin-automation",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "description": "API to find LinkedIn profiles from Outlook emails",
+  "main": "server.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start": "node server.js",
+    "dev": "node automation.js",
+    "build": "npx playwright install chromium"
   },
-  "keywords": [],
-  "author": "",
+  "keywords": ["linkedin", "outlook", "automation", "api"],
+  "author": "Talha",
   "license": "ISC",
   "dependencies": {
-    "playwright": "^1.55.0"
+    "playwright": "^1.55.0",
+    "express": "^4.18.2",
+    "cors": "^2.8.5"
+  },
+  "engines": {
+    "node": ">=18"
   }
 }
