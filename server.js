@@ -6,6 +6,30 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+// ========== ENVIRONMENT VARIABLE SUPPORT ADDED ==========
+function getStorageState() {
+  // Try to get auth state from environment variable first (for Render)
+  if (process.env.OUTLOOK_AUTH_STATE) {
+    try {
+      console.log('🔐 Using authentication from environment variable');
+      return JSON.parse(process.env.OUTLOOK_AUTH_STATE);
+    } catch (error) {
+      console.log('❌ Error parsing OUTLOOK_AUTH_STATE, falling back to auth.json');
+    }
+  }
+  
+  // Fallback to auth.json file (for local development)
+  const fs = require('fs');
+  if (fs.existsSync('auth.json')) {
+    console.log('🔐 Using authentication from auth.json file');
+    return 'auth.json';
+  }
+  
+  console.log('❌ No authentication state found. Manual login required.');
+  return undefined;
+}
+// ========== END OF ENVIRONMENT VARIABLE SUPPORT ==========
+
 // Health check endpoint
 app.get('/health', (req, res) => {
   res.json({ status: 'OK', service: 'LinkedIn Profile Finder' });
@@ -333,7 +357,20 @@ app.post('/get-linkedin-profile', async (req, res) => {
       args: ['--no-sandbox', '--disable-dev-shm-usage']
     });
     
-    const context = await browser.newContext({ storageState: 'auth.json' });
+    // ========== UPDATED: USE ENVIRONMENT VARIABLE SUPPORT ==========
+    const storageState = getStorageState();
+    if (!storageState) {
+      return res.status(500).json({
+        success: false,
+        email: email,
+        error: 'No authentication state found. Please set OUTLOOK_AUTH_STATE environment variable or provide auth.json file.',
+        timestamp: new Date().toISOString()
+      });
+    }
+
+    const context = await browser.newContext({ storageState });
+    // ========== END OF UPDATE ==========
+    
     page = await context.newPage();
 
     // Set up response listener for LinkedIn API
@@ -398,4 +435,8 @@ app.post('/get-linkedin-profile', async (req, res) => {
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`🚀 LinkedIn Profile Finder API running on port ${PORT}`);
+  console.log(`📚 Endpoints:`);
+  console.log(`   GET  /health - Health check`);
+  console.log(`   POST /get-linkedin-profile - Find LinkedIn profile by email`);
+  console.log(`🔐 Authentication: ${process.env.OUTLOOK_AUTH_STATE ? 'Environment variable' : 'auth.json file'}`);
 });
