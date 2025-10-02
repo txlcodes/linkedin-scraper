@@ -6,8 +6,7 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node automation.js",
-    "render-build": "npx playwright install --with-deps chromium",
-    "postinstall": "npx playwright install --with-deps chromium"
+    "postinstall": "npx playwright install chromium"
   },
   "keywords": ["linkedin", "outlook", "automation", "api"],
   "author": "Talha",
