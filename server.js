@@ -1,43 +1,23 @@
 const express = require('express');
 const cors = require('cors');
 const { chromium } = require('playwright');
+const fs = require('fs');
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 
-// ========== ENVIRONMENT VARIABLE SUPPORT ADDED ==========
-function getStorageState() {
-  // Try to get auth state from environment variable first (for Render)
-  if (process.env.OUTLOOK_AUTH_STATE) {
-    try {
-      console.log('🔐 Using authentication from environment variable');
-      return JSON.parse(process.env.OUTLOOK_AUTH_STATE);
-    } catch (error) {
-      console.log('❌ Error parsing OUTLOOK_AUTH_STATE, falling back to auth.json');
-    }
-  }
-  
-  // Fallback to auth.json file (for local development)
-  const fs = require('fs');
-  if (fs.existsSync('auth.json')) {
-    console.log('🔐 Using authentication from auth.json file');
-    return 'auth.json';
-  }
-  
-  console.log('❌ No authentication state found. Manual login required.');
-  return undefined;
-}
-// ========== END OF ENVIRONMENT VARIABLE SUPPORT ==========
+// ========== OUTLOOK CREDENTIALS ==========
+const OUTLOOK_EMAIL = "nawaztalha14@gmail.com";
+const OUTLOOK_PASSWORD = "Talha2005@";
+// ========== END CREDENTIALS ==========
 
-// Health check endpoint
-app.get('/health', (req, res) => {
-  res.json({ status: 'OK', service: 'LinkedIn Profile Finder' });
-});
+// Global browser session
+let browser = null;
+let page = null;
+let isLoggedIn = false;
 
-// ========== YOUR EXACT ORIGINAL FUNCTIONS ==========
-
-// Enter email in "To" field - YOUR EXACT FUNCTION
+// ========== YOUR ORIGINAL AUTOMATION FUNCTIONS ==========
 async function enterEmailAddress(page, fieldSelector, email) {
   console.log(`Entering email: ${email}`);
   const field = await page.$(fieldSelector);
@@ -51,7 +31,6 @@ async function enterEmailAddress(page, fieldSelector, email) {
   await page.waitForTimeout(800);
 }
 
-// Open contact card - YOUR EXACT ORIGINAL WORKING VERSION
 async function clickEmailPill(page, email) {
   try {
     const selector = `text="${email}"`;
@@ -63,21 +42,13 @@ async function clickEmailPill(page, email) {
       await element.click();
       await page.waitForTimeout(2000);
 
-      // ORIGINAL CONTACT CARD DETECTION - PROVEN WORKING
       const contactCardChecks = await page.evaluate(() => {
         const hasOverview = document.querySelector('[role="tab"]') && document.body.innerText.includes('Overview');
         const hasContactInfo = document.body.innerText.includes('Contact information');
         const hasLinkedInTab = document.getElementById('LPC_Header_TabBar_LinkedIn');
         const hasUpdateProfile = document.body.innerText.includes('Update your profile');
-        return {
-          hasOverview,
-          hasContactInfo,
-          hasLinkedInTab,
-          hasUpdateProfile
-        };
+        return { hasOverview, hasContactInfo, hasLinkedInTab, hasUpdateProfile };
       });
-
-      console.log('🔍 Contact card indicators:', contactCardChecks);
 
       if (contactCardChecks.hasOverview || contactCardChecks.hasContactInfo || 
           contactCardChecks.hasLinkedInTab || contactCardChecks.hasUpdateProfile) {
@@ -85,7 +56,7 @@ async function clickEmailPill(page, email) {
         return true;
       }
 
-      console.log('⚠️ Contact card not detected, trying double-click as fallback...');
+      console.log('⚠️ Contact card not detected, trying double-click...');
       await element.dblclick();
       await page.waitForTimeout(2000);
 
@@ -94,15 +65,8 @@ async function clickEmailPill(page, email) {
         const hasContactInfo = document.body.innerText.includes('Contact information');
         const hasLinkedInTab = document.getElementById('LPC_Header_TabBar_LinkedIn');
         const hasUpdateProfile = document.body.innerText.includes('Update your profile');
-        return {
-          hasOverview,
-          hasContactInfo,
-          hasLinkedInTab,
-          hasUpdateProfile
-        };
+        return { hasOverview, hasContactInfo, hasLinkedInTab, hasUpdateProfile };
       });
-
-      console.log('🔍 Contact card indicators after double-click:', contactCardChecks2);
 
       if (contactCardChecks2.hasOverview || contactCardChecks2.hasContactInfo || 
           contactCardChecks2.hasLinkedInTab || contactCardChecks2.hasUpdateProfile) {
@@ -113,20 +77,15 @@ async function clickEmailPill(page, email) {
   } catch (err) {
     console.log('❌ Error opening contact card:', err);
   }
-  
   console.log('⚠️ Could not confirm contact card opened');
   return false;
 }
 
-// Click LinkedIn tab - YOUR EXACT FUNCTION
 async function clickLinkedInTab(page) {
   console.log('🔍 Clicking LinkedIn tab...');
-  
   await page.waitForTimeout(500);
 
-  // Strategy 1: Click with reasonable timeout
   try {
-    console.log('Strategy 1: Clicking LinkedIn tab...');
     await page.locator('#LPC_Header_TabBar_LinkedIn').click({ timeout: 3000, force: true });
     console.log('✅ LinkedIn tab clicked!');
     await page.waitForTimeout(1500);
@@ -135,17 +94,12 @@ async function clickLinkedInTab(page) {
     console.log('Strategy 1 failed:', err.message);
   }
 
-  // Strategy 2: Coordinate click
   try {
-    console.log('Strategy 2: Clicking at coordinates...');
     const elementInfo = await page.evaluate(() => {
       const el = document.querySelector('#LPC_Header_TabBar_LinkedIn');
       if (!el) return null;
       const rect = el.getBoundingClientRect();
-      return {
-        x: rect.x + rect.width / 2,
-        y: rect.y + rect.height / 2
-      };
+      return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };
     });
     
     if (elementInfo) {
@@ -162,281 +116,348 @@ async function clickLinkedInTab(page) {
   return false;
 }
 
-// Clear the To field - YOUR EXACT FUNCTION
 async function clearToField(page) {
   console.log('🗑️ Clearing To field...');
-  
-  // FIRST: Click on a safe area away from any email pills
-  await page.mouse.click(50, 200); // Click in empty space
+  await page.mouse.click(50, 200);
   await page.waitForTimeout(300);
-  
-  // SECOND: Focus the field without clicking on pills
   await page.focus('[aria-label="To"]');
   await page.waitForTimeout(200);
-  
-  // THIRD: Select all and delete
   await page.keyboard.press('Control+A');
   await page.keyboard.press('Delete');
   await page.waitForTimeout(300);
-  
-  // FOURTH: Click away again to ensure no pill is selected
   await page.mouse.click(50, 200);
   await page.waitForTimeout(300);
 }
 
-// Close profile card - YOUR EXACT FUNCTION
 async function closeProfileCard(page) {
   console.log('🔒 Closing profile card...');
-  
-  // Method 1: Multiple Escape presses to be sure
   await page.keyboard.press('Escape');
   await page.waitForTimeout(400);
   await page.keyboard.press('Escape');
   await page.waitForTimeout(400);
-  
-  // Method 2: Click in multiple safe areas
-  await page.mouse.click(100, 100); // Top-left corner
+  await page.mouse.click(100, 100);
   await page.waitForTimeout(200);
-  await page.mouse.click(300, 300); // Middle of page
+  await page.mouse.click(300, 300);
   await page.waitForTimeout(200);
-  
-  // Method 3: Final escape to be absolutely sure
   await page.keyboard.press('Escape');
   await page.waitForTimeout(200);
-  
   console.log('✅ Profile card closed');
 }
 
-// Check if profile card is actually closed - YOUR EXACT FUNCTION
-async function isProfileCardClosed(page) {
-  return await page.evaluate(() => {
-    const card = document.querySelector('[role="dialog"], [aria-label*="contact"], #LPC_Header_TabBar_LinkedIn');
-    return !card || card.offsetParent === null;
-  });
-}
+// ========== IMPROVED HYBRID LOGIN WITH DEBUGGING ==========
+async function initializeBrowser() {
+  if (isLoggedIn && browser && page) {
+    console.log('✅ Browser already initialized and logged in');
+    return true;
+  }
 
-// Process next email - YOUR EXACT FUNCTION
-async function processNextEmail(page, emailData) {
+  console.log('🚀 Initializing browser with IMPROVED session transfer...');
+  
   try {
-    console.log('Processing next email:', emailData.to);
+    // STEP 1: HEADED LOGIN
+    console.log('🔐 Starting HEADED login...');
+    browser = await chromium.launch({ 
+      headless: false,
+      slowMo: 100,
+      args: ['--no-sandbox', '--disable-dev-shm-usage']
+    });
     
-    // Double-check profile card is closed before starting
-    const isClosed = await isProfileCardClosed(page);
-    if (!isClosed) {
-      console.log('🔄 Ensuring profile card is closed before next email...');
-      await closeProfileCard(page);
-    }
+    const context = await browser.newContext({
+      viewport: { width: 1400, height: 1000 }
+    });
     
-    await enterEmailAddress(page, '[aria-label="To"]', emailData.to);
+    page = await context.newPage();
 
-    console.log('🔍 About to click email pill...');
-    const cardOpened = await clickEmailPill(page, emailData.to);
+    console.log('👀 BROWSER WINDOW OPENED - PLEASE LOGIN MANUALLY');
+    console.log('📝 Steps:');
+    console.log('   1. Enter email: nawaztalha14@gmail.com');
+    console.log('   2. Click "Talha Nawaz" or enter password');
+    console.log('   3. Wait for Outlook to load completely');
+    console.log('⏳ Waiting for manual login...');
     
-    if (cardOpened) {
-      console.log('✅ Contact card is open. Waiting for tabs to load...');
-      await page.waitForTimeout(2500);
-      
-      const linkedInTabExists = await page.$('#LPC_Header_TabBar_LinkedIn');
-      
-      if (linkedInTabExists) {
-        console.log('✅ LinkedIn tab found. Attempting to click...');
-        await clickLinkedInTab(page);
-        console.log('✅ LinkedIn tab clicked. Monitoring for API calls...');
-        await page.waitForTimeout(2500);
-      } else {
-        console.log('❌ No LinkedIn tab found.');
-      }
+    await page.goto('https://outlook.office.com/mail/');
+    await page.waitForSelector('button[aria-label="New mail"]', { timeout: 120000 });
+    console.log('✅ Manual login successful!');
+
+    // Wait a bit more to ensure everything is loaded
+    await page.waitForTimeout(3000);
+
+    // STEP 2: DEBUG SESSION BEFORE SAVING
+    console.log('🔍 Checking session before transfer...');
+    const cookiesBefore = await context.cookies();
+    console.log(`🍪 Cookies before save: ${cookiesBefore.length}`);
+    
+    // Save session with proper error handling
+    console.log('💾 Saving session state...');
+    const storageState = await context.storageState();
+    fs.writeFileSync('session-backup.json', JSON.stringify(storageState, null, 2));
+    console.log('✅ Session saved to session-backup.json');
+
+    // Close headed browser
+    await browser.close();
+    console.log('🔒 Headed browser closed');
+
+    // STEP 3: START HEADLESS WITH SAVED SESSION
+    console.log('🔄 Starting HEADLESS browser with saved session...');
+    browser = await chromium.launch({ 
+      headless: true,
+      args: [
+        '--no-sandbox',
+        '--disable-dev-shm-usage',
+        '--disable-blink-features=AutomationControlled'
+      ]
+    });
+    
+    const headlessContext = await browser.newContext({
+      storageState: storageState,
+      viewport: { width: 1400, height: 1000 },
+      userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+    });
+
+    // Remove automation detection
+    await headlessContext.addInitScript(() => {
+      Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+    });
+
+    page = await headlessContext.newPage();
+
+    // DEBUG: Check cookies after restore
+    const cookiesAfter = await headlessContext.cookies();
+    console.log(`🍪 Cookies after restore: ${cookiesAfter.length}`);
+
+    // STEP 4: VERIFY LOGIN IN HEADLESS MODE
+    console.log('🔐 Verifying login in headless mode...');
+    await page.goto('https://outlook.office.com/mail/', { 
+      waitUntil: 'networkidle',
+      timeout: 15000 
+    });
+
+    // Check multiple ways to verify we're logged in
+    const loginCheck = await page.evaluate(() => {
+      const checks = {
+        hasNewMailButton: !!document.querySelector('button[aria-label="New mail"]'),
+        hasMailContent: !!document.querySelector('[role="main"]'),
+        hasNavigation: !!document.querySelector('[data-app-section="Navigation"]'),
+        isOnLoginPage: !!document.querySelector('input[type="email"]'),
+        pageTitle: document.title,
+        bodyText: document.body.innerText.substring(0, 200)
+      };
+      return checks;
+    });
+
+    console.log('🔍 Login verification:', JSON.stringify(loginCheck, null, 2));
+
+    if (loginCheck.hasNewMailButton && !loginCheck.isOnLoginPage) {
+      console.log('✅ SUCCESS! Successfully switched to HEADLESS mode!');
+      isLoggedIn = true;
+      return true;
     } else {
-      console.log('❌ Failed to open contact card.');
+      console.log('❌ FAILED: Not properly logged in after switch');
+      await page.screenshot({ path: 'headless-login-failed.png' });
+      console.log('📸 Screenshot saved: headless-login-failed.png');
+      throw new Error('Session transfer failed - not logged in after switch to headless');
     }
-
-  } catch (err) {
-    console.log('Error processing next email:', err);
+    
+  } catch (error) {
+    console.log('❌ Browser initialization failed:', error.message);
+    if (browser) await browser.close();
+    browser = null;
+    page = null;
+    isLoggedIn = false;
+    return false;
   }
 }
 
-// ========== MAIN AUTOMATION LOGIC (YOUR ORIGINAL) ==========
-async function runAutomation(page, email) {
-  try {
-    // Capture LinkedIn API responses
-    page.on('response', async (response) => {
+// ========== MAIN AUTOMATION ==========
+async function findLinkedInProfile(targetEmail) {
+  if (!isLoggedIn) {
+    console.log('🔐 Not logged in, initializing browser...');
+    const initialized = await initializeBrowser();
+    if (!initialized) {
+      throw new Error('Failed to initialize browser and login');
+    }
+  }
+
+  return new Promise(async (resolve) => {
+    let profileFound = false;
+
+    // Set up response listener for LinkedIn API
+    const responseHandler = async (response) => {
       const url = response.url();
-      if (url.includes('linkedin/profiles/full')) {
+      if (url.includes('linkedin/profiles/full') && !profileFound) {
         try {
           const data = await response.json();
-          console.log('Full SMTP Response:', JSON.stringify(data, null, 2));
           const profileUrl = data.persons?.[0]?.linkedInUrl;
           if (profileUrl) {
-            console.log('🎯 LinkedIn Profile URL:', profileUrl);
-
-            // FIXED: Better cleanup sequence
-            await page.waitForTimeout(1000);
-            
-            // Close profile card and verify it's closed
-            await closeProfileCard(page);
-            const isClosed = await isProfileCardClosed(page);
-            console.log('🔍 Profile card closed:', isClosed);
-            
-            if (!isClosed) {
-              console.log('🔄 Profile card still open, trying additional close...');
-              await closeProfileCard(page);
-            }
-            
-            // Now safely clear the field
-            await clearToField(page);
-            console.log('⏹️ Ready for next email...');
+            console.log('✅ LinkedIn Profile URL:', profileUrl);
+            profileFound = true;
+            page.removeListener('response', responseHandler);
+            resolve(profileUrl);
           }
         } catch (err) {
           console.log('Error parsing LinkedIn response:', err);
         }
       }
-    });
+    };
 
-    console.log('Navigating to Outlook...');
-    await page.goto('https://outlook.office.com/mail/');
-    await page.waitForSelector('button[aria-label="New mail"]', { timeout: 30000 });
+    page.on('response', responseHandler);
 
-    console.log('Clicking New Mail...');
-    await page.click('button[aria-label="New mail"]');
-    await page.waitForSelector('[aria-label="To"]', { timeout: 10000 });
-
-    await enterEmailAddress(page, '[aria-label="To"]', email);
-
-    console.log('🔍 About to click email pill...');
-    const cardOpened = await clickEmailPill(page, email);
-    console.log('🔍 clickEmailPill returned:', cardOpened);
-    
-    if (cardOpened) {
-      console.log('✅ Contact card is open. Waiting for tabs to load...');
-      await page.waitForTimeout(2500);
+    try {
+      console.log('📧 Starting HEADLESS search for:', targetEmail);
       
-      console.log('🔍 Checking if LinkedIn tab exists...');
-      const linkedInTabExists = await page.$('#LPC_Header_TabBar_LinkedIn');
-      console.log('🔍 LinkedIn tab exists:', !!linkedInTabExists);
+      // Navigate to ensure we're on the right page
+      await page.goto('https://outlook.office.com/mail/', { waitUntil: 'networkidle' });
       
-      if (linkedInTabExists) {
-        console.log('✅ LinkedIn tab found. Attempting to click...');
-        const linkedInClicked = await clickLinkedInTab(page);
-        if (linkedInClicked) {
-          console.log('✅ LinkedIn tab clicked successfully. Monitoring for API calls...');
-          await page.waitForTimeout(2500);
+      // Click New Mail
+      await page.click('button[aria-label="New mail"]');
+      await page.waitForSelector('[aria-label="To"]', { timeout: 10000 });
+
+      // Enter target email
+      await enterEmailAddress(page, '[aria-label="To"]', targetEmail);
+
+      // Open contact card
+      const cardOpened = await clickEmailPill(page, targetEmail);
+      
+      if (cardOpened) {
+        await page.waitForTimeout(2500);
+        const linkedInTabExists = await page.$('#LPC_Header_TabBar_LinkedIn');
+        
+        if (linkedInTabExists) {
+          console.log('✅ LinkedIn tab found, clicking...');
+          await clickLinkedInTab(page);
+          
+          // Wait for profile or timeout
+          setTimeout(() => {
+            if (!profileFound) {
+              console.log('⏰ Timeout - no LinkedIn profile found');
+              page.removeListener('response', responseHandler);
+              resolve(null);
+            }
+          }, 15000);
+          
         } else {
-          console.log('❌ Failed to click LinkedIn tab.');
+          console.log('❌ No LinkedIn tab found in contact card');
+          page.removeListener('response', responseHandler);
+          resolve(null);
         }
       } else {
-        console.log('❌ No LinkedIn tab found.');
+        console.log('❌ Failed to open contact card');
+        page.removeListener('response', responseHandler);
+        resolve(null);
       }
-    } else {
-      console.log('❌ Failed to open contact card.');
+
+    } catch (error) {
+      console.log('❌ Automation error:', error);
+      page.removeListener('response', responseHandler);
+      resolve(null);
     }
-
-    console.log('\nListening for network requests...');
-
-  } catch (err) {
-    console.log('Automation error:', err);
-    throw err;
-  }
+  });
 }
 
-// ========== API ENDPOINT ==========
+// ========== API ENDPOINTS ==========
+app.get('/health', (req, res) => {
+  res.json({ 
+    status: 'OK', 
+    service: 'LinkedIn Profile Finder',
+    logged_in: isLoggedIn,
+    mode: isLoggedIn ? 'HEADLESS' : 'NOT_LOGGED_IN',
+    timestamp: new Date().toISOString()
+  });
+});
+
 app.post('/get-linkedin-profile', async (req, res) => {
   const { email } = req.body;
   
   if (!email || !email.includes('@')) {
-    return res.status(400).json({ error: 'Valid email address is required' });
+    return res.status(400).json({ 
+      success: false,
+      error: 'Valid email address is required' 
+    });
   }
 
-  console.log(`🔍 Processing email: ${email}`);
+  console.log(`🎯 API Request for: ${email}`);
   
-  let browser;
-  let page;
   try {
-    // Launch browser
-    browser = await chromium.launch({ 
-      headless: true,
-      args: ['--no-sandbox', '--disable-dev-shm-usage']
-    });
+    const linkedinProfile = await findLinkedInProfile(email);
     
-    // ========== UPDATED: USE ENVIRONMENT VARIABLE SUPPORT ==========
-    const storageState = getStorageState();
-    if (!storageState) {
-      return res.status(500).json({
-        success: false,
-        email: email,
-        error: 'No authentication state found. Please set OUTLOOK_AUTH_STATE environment variable or provide auth.json file.',
-        timestamp: new Date().toISOString()
-      });
+    // Cleanup for next request
+    if (page) {
+      await closeProfileCard(page);
+      await clearToField(page);
     }
-
-    const context = await browser.newContext({ storageState });
-    // ========== END OF UPDATE ==========
     
-    page = await context.newPage();
-
-    // Set up response listener for LinkedIn API
-    const linkedinProfile = await new Promise(async (resolve) => {
-      page.on('response', async (response) => {
-        const url = response.url();
-        if (url.includes('linkedin/profiles/full')) {
-          try {
-            const data = await response.json();
-            console.log('🎯 LinkedIn API Response Received');
-            const profileUrl = data.persons?.[0]?.linkedInUrl;
-            if (profileUrl) {
-              console.log('✅ LinkedIn Profile URL:', profileUrl);
-              resolve(profileUrl);
-            }
-          } catch (err) {
-            console.log('Error parsing LinkedIn response:', err);
-          }
-        }
-      });
-
-      // Run your original automation
-      await runAutomation(page, email);
-
-      // Timeout after 30 seconds if no response
-      setTimeout(() => {
-        resolve(null);
-      }, 30000);
-    });
-
     if (linkedinProfile) {
       res.json({
         success: true,
         email: email,
         linkedin_url: linkedinProfile,
+        mode: 'HEADLESS',
         timestamp: new Date().toISOString()
       });
     } else {
       res.json({
         success: false,
         email: email,
-        error: 'LinkedIn profile not found or timeout',
+        error: 'LinkedIn profile not found for this email',
+        mode: 'HEADLESS',
         timestamp: new Date().toISOString()
       });
     }
 
   } catch (error) {
-    console.error('❌ Automation error:', error);
+    console.error('❌ Server error:', error);
     res.status(500).json({
       success: false,
       email: email,
       error: error.message,
       timestamp: new Date().toISOString()
     });
-  } finally {
-    // Cleanup
-    if (page) await page.close();
-    if (browser) await browser.close();
   }
 });
 
+app.get('/login', async (req, res) => {
+  try {
+    console.log('🚀 Manual login requested...');
+    const success = await initializeBrowser();
+    
+    if (success) {
+      res.json({ 
+        success: true,
+        status: 'SUCCESS', 
+        message: 'Login completed! Now running in headless mode.',
+        mode: 'HEADLESS_READY',
+        timestamp: new Date().toISOString()
+      });
+    } else {
+      res.json({ 
+        success: false,
+        status: 'FAILED', 
+        message: 'Login failed. Please check browser window and try again.',
+        timestamp: new Date().toISOString()
+      });
+    }
+  } catch (error) {
+    res.json({ 
+      success: false,
+      status: 'ERROR', 
+      message: error.message,
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
+// ========== START SERVER ==========
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`🚀 LinkedIn Profile Finder API running on port ${PORT}`);
+  console.log(`📧 Outlook account: ${OUTLOOK_EMAIL}`);
   console.log(`📚 Endpoints:`);
-  console.log(`   GET  /health - Health check`);
-  console.log(`   POST /get-linkedin-profile - Find LinkedIn profile by email`);
-  console.log(`🔐 Authentication: ${process.env.OUTLOOK_AUTH_STATE ? 'Environment variable' : 'auth.json file'}`);
+  console.log(`   GET  /health - Check service status`);
+  console.log(`   GET  /login - Manual login (one-time headed)`);
+  console.log(`   POST /get-linkedin-profile - Find LinkedIn profiles (headless)`);
+  console.log(`🔐 Mode: One-time headed login → Forever headless automation`);
+  console.log(`\n🎯 To get started:`);
+  console.log(`   1. Call: http://localhost:${PORT}/login`);
+  console.log(`   2. Login manually in the browser window`);
+  console.log(`   3. Then use the API: POST /get-linkedin-profile`);
 });

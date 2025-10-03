@@ -193,11 +193,92 @@ async function isProfileCardClosed(page) {
   });
 }
 
-// Main automation - FIXED profile card issue
+// Global variables for API
+let foundLinkedInUrl = null;
+let isProcessing = false;
+let apiPage = null;
+
+// Modified runAutomation for API
+async function runAutomationForAPI(emailData) {
+  try {
+    // Launch browser if not already running
+    if (!global.outlookBrowser) {
+      console.log('🚀 Starting browser...');
+      global.outlookBrowser = await chromium.launch({ 
+        headless: false, 
+        slowMo: 20
+      });
+      global.outlookContext = await global.outlookBrowser.newContext({ storageState: 'auth.json' });
+    }
+    
+    const browser = global.outlookBrowser;
+    const context = global.outlookContext;
+    apiPage = await context.newPage();
+
+    // Capture LinkedIn API responses
+    apiPage.on('response', async (response) => {
+      const url = response.url();
+      if (url.includes('linkedin/profiles/full')) {
+        try {
+          const data = await response.json();
+          console.log('Full SMTP Response:', JSON.stringify(data, null, 2));
+          const profileUrl = data.persons?.[0]?.linkedInUrl;
+          if (profileUrl) {
+            console.log('🎯 LinkedIn Profile URL:', profileUrl);
+            foundLinkedInUrl = profileUrl;
+
+            // Cleanup
+            await page.waitForTimeout(1000);
+            await closeProfileCard(apiPage);
+            await clearToField(apiPage);
+          }
+        } catch (err) {
+          console.log('Error parsing LinkedIn response:', err);
+        }
+      }
+    });
+
+    console.log('Navigating to Outlook...');
+    await apiPage.goto('https://outlook.office.com/mail/');
+    await apiPage.waitForSelector('button[aria-label="New mail"]', { timeout: 30000 });
+
+    console.log('Clicking New Mail...');
+    await apiPage.click('button[aria-label="New mail"]');
+    await apiPage.waitForSelector('[aria-label="To"]', { timeout: 10000 });
+
+    await enterEmailAddress(apiPage, '[aria-label="To"]', emailData.to);
+
+    console.log('🔍 About to click email pill...');
+    const cardOpened = await clickEmailPill(apiPage, emailData.to);
+    
+    if (cardOpened) {
+      console.log('✅ Contact card is open. Waiting for tabs to load...');
+      await apiPage.waitForTimeout(2500);
+      
+      console.log('🔍 Checking if LinkedIn tab exists...');
+      const linkedInTabExists = await apiPage.$('#LPC_Header_TabBar_LinkedIn');
+      
+      if (linkedInTabExists) {
+        console.log('✅ LinkedIn tab found. Attempting to click...');
+        await clickLinkedInTab(apiPage);
+        console.log('✅ LinkedIn tab clicked. Monitoring for API calls...');
+        await apiPage.waitForTimeout(5000);
+      } else {
+        console.log('❌ No LinkedIn tab found.');
+      }
+    } else {
+      console.log('❌ Failed to open contact card.');
+    }
+
+  } catch (err) {
+    console.log('Automation error:', err);
+  }
+}
+
+// Original runAutomation (for manual mode)
 async function runAutomation(emailData) {
   let browser;
   try {
-    // Launch browser if not already running
     if (!global.outlookBrowser) {
       console.log('🚀 Starting browser...');
       global.outlookBrowser = await chromium.launch({ 
@@ -211,7 +292,6 @@ async function runAutomation(emailData) {
     const context = global.outlookContext;
     const page = await context.newPage();
 
-    // Capture LinkedIn API responses
     page.on('response', async (response) => {
       const url = response.url();
       if (url.includes('linkedin/profiles/full')) {
@@ -221,24 +301,10 @@ async function runAutomation(emailData) {
           const profileUrl = data.persons?.[0]?.linkedInUrl;
           if (profileUrl) {
             console.log('🎯 LinkedIn Profile URL:', profileUrl);
-
-            // FIXED: Better cleanup sequence
             await page.waitForTimeout(1000);
-            
-            // Close profile card and verify it's closed
             await closeProfileCard(page);
-            const isClosed = await isProfileCardClosed(page);
-            console.log('🔍 Profile card closed:', isClosed);
-            
-            if (!isClosed) {
-              console.log('🔄 Profile card still open, trying additional close...');
-              await closeProfileCard(page);
-            }
-            
-            // Now safely clear the field
             await clearToField(page);
             console.log('⏹️ Ready for next email...');
-
             const anotherEmailData = await getEmailInput();
             await processNextEmail(page, anotherEmailData);
           }
@@ -260,25 +326,18 @@ async function runAutomation(emailData) {
 
     console.log('🔍 About to click email pill...');
     const cardOpened = await clickEmailPill(page, emailData.to);
-    console.log('🔍 clickEmailPill returned:', cardOpened);
     
     if (cardOpened) {
       console.log('✅ Contact card is open. Waiting for tabs to load...');
       await page.waitForTimeout(2500);
       
-      console.log('🔍 Checking if LinkedIn tab exists...');
       const linkedInTabExists = await page.$('#LPC_Header_TabBar_LinkedIn');
-      console.log('🔍 LinkedIn tab exists:', !!linkedInTabExists);
       
       if (linkedInTabExists) {
         console.log('✅ LinkedIn tab found. Attempting to click...');
-        const linkedInClicked = await clickLinkedInTab(page);
-        if (linkedInClicked) {
-          console.log('✅ LinkedIn tab clicked successfully. Monitoring for API calls...');
-          await page.waitForTimeout(2500);
-        } else {
-          console.log('❌ Failed to click LinkedIn tab.');
-        }
+        await clickLinkedInTab(page);
+        console.log('✅ LinkedIn tab clicked. Monitoring for API calls...');
+        await page.waitForTimeout(2500);
       } else {
         console.log('❌ No LinkedIn tab found.');
       }
@@ -304,7 +363,6 @@ async function processNextEmail(page, emailData) {
   try {
     console.log('Processing next email:', emailData.to);
     
-    // Double-check profile card is closed before starting
     const isClosed = await isProfileCardClosed(page);
     if (!isClosed) {
       console.log('🔄 Ensuring profile card is closed before next email...');
@@ -339,8 +397,97 @@ async function processNextEmail(page, emailData) {
   }
 }
 
-// Run script
+// ==================== SIMPLE API ====================
+const http = require('http');
+
+const apiServer = http.createServer(async (req, res) => {
+  // Set CORS headers
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+
+  if (req.method === 'OPTIONS') {
+    res.writeHead(200);
+    res.end();
+    return;
+  }
+
+  if (req.method === 'POST' && req.url === '/find-linkedin') {
+    if (isProcessing) {
+      res.writeHead(429, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Already processing another request' }));
+      return;
+    }
+
+    let body = '';
+    req.on('data', chunk => body += chunk);
+    
+    req.on('end', async () => {
+      try {
+        const { email } = JSON.parse(body);
+        
+        if (!email) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Email is required' }));
+          return;
+        }
+
+        console.log(`📥 API Request for: ${email}`);
+        isProcessing = true;
+        foundLinkedInUrl = null;
+
+        // Run automation
+        await runAutomationForAPI({ to: email });
+
+        // Wait for result (max 30 seconds)
+        let waitCount = 0;
+        while (foundLinkedInUrl === null && waitCount < 30) {
+          await new Promise(resolve => setTimeout(resolve, 1000));
+          waitCount++;
+          console.log(`⏳ Waiting... ${waitCount}/30`);
+        }
+
+        if (foundLinkedInUrl) {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ 
+            success: true, 
+            email: email, 
+            linkedinUrl: foundLinkedInUrl 
+          }));
+        } else {
+          res.writeHead(404, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ 
+            success: false, 
+            email: email, 
+            error: 'LinkedIn profile not found' 
+          }));
+        }
+
+      } catch (error) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: error.message }));
+      } finally {
+        isProcessing = false;
+        foundLinkedInUrl = null;
+      }
+    });
+  } else {
+    res.writeHead(404, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'Not found' }));
+  }
+});
+
+// Start API server
+apiServer.listen(3000, () => {
+  console.log('🚀 API Server running on http://localhost:3000');
+  console.log('📮 Send POST requests to: http://localhost:3000/find-linkedin');
+  console.log('💡 Example: curl -X POST http://localhost:3000/find-linkedin -H "Content-Type: application/json" -d \'{"email": "test@gmail.com"}\'');
+  console.log('\n🎯 Manual mode: Just wait for email prompt...\n');
+});
+
+// Original manual mode
 (async () => {
+  // Manual mode still works
   const emailData = await getEmailInput();
   await runAutomation(emailData);
 })();
