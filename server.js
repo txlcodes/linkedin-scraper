@@ -144,7 +144,7 @@ async function closeProfileCard(page) {
   console.log('✅ Profile card closed');
 }
 
-// ========== IMPROVED HYBRID LOGIN WITH DEBUGGING ==========
+// ========== IMPROVED HYBRID LOGIN WITH AUTO-CLICK ==========
 async function initializeBrowser() {
   if (isLoggedIn && browser && page) {
     console.log('✅ Browser already initialized and logged in');
@@ -225,37 +225,132 @@ async function initializeBrowser() {
     const cookiesAfter = await headlessContext.cookies();
     console.log(`🍪 Cookies after restore: ${cookiesAfter.length}`);
 
-    // STEP 4: VERIFY LOGIN IN HEADLESS MODE
-    console.log('🔐 Verifying login in headless mode...');
+    // STEP 4: HANDLE ACCOUNT SELECTION IN HEADLESS MODE
+    console.log('🔐 Checking login status in headless mode...');
     await page.goto('https://outlook.office.com/mail/', { 
       waitUntil: 'networkidle',
       timeout: 15000 
     });
 
-    // Check multiple ways to verify we're logged in
+    // Check what screen we're on
     const loginCheck = await page.evaluate(() => {
       const checks = {
         hasNewMailButton: !!document.querySelector('button[aria-label="New mail"]'),
         hasMailContent: !!document.querySelector('[role="main"]'),
         hasNavigation: !!document.querySelector('[data-app-section="Navigation"]'),
         isOnLoginPage: !!document.querySelector('input[type="email"]'),
+        hasAccountSelection: document.body.innerText.includes('We found an account you can use here'),
+        hasTalhaNawaz: document.body.innerText.includes('Talha Nawaz'),
         pageTitle: document.title,
-        bodyText: document.body.innerText.substring(0, 200)
+        bodyText: document.body.innerText.substring(0, 300)
       };
       return checks;
     });
 
     console.log('🔍 Login verification:', JSON.stringify(loginCheck, null, 2));
 
+    // CASE 1: Already logged in (ideal)
     if (loginCheck.hasNewMailButton && !loginCheck.isOnLoginPage) {
-      console.log('✅ SUCCESS! Successfully switched to HEADLESS mode!');
+      console.log('✅ SUCCESS! Already logged in to Outlook!');
       isLoggedIn = true;
       return true;
-    } else {
-      console.log('❌ FAILED: Not properly logged in after switch');
-      await page.screenshot({ path: 'headless-login-failed.png' });
-      console.log('📸 Screenshot saved: headless-login-failed.png');
-      throw new Error('Session transfer failed - not logged in after switch to headless');
+    }
+    
+    // CASE 2: Account selection screen with Talha Nawaz (your current situation)
+    else if (loginCheck.hasTalhaNawaz && loginCheck.hasAccountSelection) {
+      console.log('🎯 Found Talha Nawaz account selection screen!');
+      console.log('🖱️ Attempting to auto-select Talha Nawaz account...');
+      
+      // Multiple strategies to click the account
+      let clicked = false;
+      
+      // Strategy 1: Click by exact text
+      try {
+        await page.click('text="Talha Nawaz"', { timeout: 5000 });
+        console.log('✅ Clicked Talha Nawaz by text');
+        clicked = true;
+      } catch (err) {
+        console.log('Strategy 1 failed:', err.message);
+      }
+      
+      // Strategy 2: Click any account container
+      if (!clicked) {
+        try {
+          const accountSelectors = [
+            'div[data-test-id="account-container"]',
+            'div[role="button"]',
+            'button',
+            'div.account'
+          ];
+          
+          for (const selector of accountSelectors) {
+            const element = await page.$(selector);
+            if (element) {
+              await element.click();
+              console.log(`✅ Clicked account using selector: ${selector}`);
+              clicked = true;
+              break;
+            }
+          }
+        } catch (err) {
+          console.log('Strategy 2 failed:', err.message);
+        }
+      }
+      
+      // Strategy 3: Click using coordinates (fallback)
+      if (!clicked) {
+        try {
+          // Find element and click at center
+          const element = await page.$('text="Talha Nawaz"');
+          if (element) {
+            const box = await element.boundingBox();
+            if (box) {
+              await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+              console.log('✅ Clicked Talha Nawaz by coordinates');
+              clicked = true;
+            }
+          }
+        } catch (err) {
+          console.log('Strategy 3 failed:', err.message);
+        }
+      }
+      
+      if (clicked) {
+        // Wait for login to complete
+        console.log('⏳ Waiting for login after account selection...');
+        await page.waitForTimeout(5000);
+        
+        // Verify we're logged in now
+        const afterClickCheck = await page.evaluate(() => {
+          return !!document.querySelector('button[aria-label="New mail"]');
+        });
+        
+        if (afterClickCheck) {
+          console.log('✅ SUCCESS! Auto-selected Talha Nawaz and logged in!');
+          isLoggedIn = true;
+          return true;
+        } else {
+          console.log('❌ Click worked but still not logged in');
+          await page.screenshot({ path: 'after-click-failed.png' });
+          throw new Error('Account selection worked but login failed');
+        }
+      } else {
+        console.log('❌ Could not click Talha Nawaz account');
+        await page.screenshot({ path: 'click-failed.png' });
+        throw new Error('Failed to auto-select Talha Nawaz account');
+      }
+    }
+    
+    // CASE 3: On login page (session lost)
+    else if (loginCheck.isOnLoginPage) {
+      console.log('❌ Session lost - back on login page');
+      throw new Error('Session transfer completely failed');
+    }
+    
+    else {
+      console.log('❌ Unknown screen state');
+      await page.screenshot({ path: 'unknown-screen.png' });
+      throw new Error('Unknown login state');
     }
     
   } catch (error) {
